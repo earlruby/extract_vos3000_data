@@ -23,8 +23,8 @@ Setup
 
  * Log into your Linux-based switch as root and create a "webcdr" account that will run the script:
 
-   # useradd -c 'WebCDR Data Collection' -d /home/webcdr -m -s /bin/bash webcdr
-   # mkdir ~webcdr/bin
+   useradd -c 'WebCDR Data Collection' -d /home/webcdr -m -s /bin/bash webcdr
+   mkdir ~webcdr/bin
 
  * From the machine where you downloaded the files, copy the extract_vos3000_data and crontab.txt files to ~webcdr/bin/:
 
