@@ -1,0 +1,261 @@
+#!/usr/bin/perl
+
+# Each day the VOS3000 switch creates a new MySQL database file for that day's call data. These files have the format e_cdr_YYYYMMDD.*
+#
+# Manually you can extract all data from VOS3000 with this:
+#
+# echo SELECT \* FROM e_cdr_20130424 | mysql -B -u root vos3000db > ~/cdr_data/cdr_20130424000000_20130425000000.tsv
+#
+# This script allows you to grab the latest 15 minutes of data every 15 minutes and put that data into separate files.
+#
+# Each file has 24 hours of data, and one field (the call end time) will start a few seconds after the top of the hour and
+# end a few seconds after the top of the hour 24 hours later. We call this hour the "rollover hour" and it can be in the
+# range of 0-23.
+#
+# The call end times recorded in the database may be in a timezone other than the system time of the database. If you always want
+# the latest 15 minutes of data, you need to tell the script the number of hours offset from UTC the data in the database is. So
+# If it's currently 00:00:01 UTC, and the latest call in the database is time-stamped with a "stoptime" of 17:00:01, then the 
+# call time offset is -7 hours.
+#
+# Since there's no telling what Perl libraries may be installed on a VOS3000 switch, this script is designed to work with as few
+# required libraries as possible.
+
+use strict;
+
+use Getopt::Long;
+use File::Path qw(mkpath);
+use Time::Local qw(timegm);
+
+use constant OUTPUT_DIR => '/home/webcdr/cdr_data';
+use constant MYSQL_DB   => 'vos3000db';
+use constant MYSQL_USER => 'root';
+use constant STOP_TIME_FIELD => 'stop';			# "stop" or "stoptime"
+use constant STOP_TIME_FORMAT => 'datetime';
+
+# exit codes
+use constant ERROR_NONE  => 0;
+use constant ERROR_USAGE => 1;
+
+my $DEBUG = 0;
+
+sub main;
+sub last_quarter_hour($);
+sub packed_to_vos3000_date($$);
+sub debug($);
+sub usage(;$$);
+
+main;
+
+sub main {
+    my ($start_time, $end_time, $yesterday, $help);
+
+    my $output_dir = OUTPUT_DIR;
+    my $mysql_db = MYSQL_DB;
+    my $mysql_user = MYSQL_USER;
+    my $stop_time_field = STOP_TIME_FIELD;
+    my $stop_time_format = STOP_TIME_FORMAT;
+
+    my $rollover_hour = 0;
+    my $call_time_offset = 0;
+    my $field_list = '*';
+
+    Getopt::Long::Configure('auto_abbrev');
+    GetOptions(
+        'output-dir=s'       => \$output_dir,
+        'start-time=i'       => \$start_time,
+        'end-time=i'         => \$end_time,
+        'yesterday!'         => \$yesterday,
+        'mysql-db=s'         => \$mysql_db,
+        'mysql-user=s'       => \$mysql_user,
+        'stop-time-field=s'  => \$stop_time_field,
+        'stop-time-format=s' => \$stop_time_format,
+        'rollover-hour=n'    => \$rollover_hour,
+        'call-time-offset=i' => \$call_time_offset,
+        'field-list=s'       => \$field_list,
+        'debug!'             => \$DEBUG,
+        'help!'              => \$help,
+    ) or usage(undef, ERROR_USAGE);    # Getopt generates its own message to stderr on unrecognized options
+
+    usage() if $help;
+    usage('--output_dir must be defined',                               ERROR_USAGE) if not defined $output_dir;
+    usage('--start-time must be a date in the format YYYYMMDDHHMISS',   ERROR_USAGE) if defined $start_time and $start_time !~ m/^(\d{14})$/;
+    usage('--end-time must be a date in the format YYYYMMDDHHMISS',     ERROR_USAGE) if defined $end_time and $end_time !~ m/^(\d{14})$/;
+    usage('If --start-time is defined then --end-time must be defined', ERROR_USAGE) if defined $start_time and not defined $end_time;
+    usage('If --end-time is defined then --start-time must be defined', ERROR_USAGE) if defined $end_time and not defined $start_time;
+    usage('--stop-time-format must be epoch, epoch1000, or datetime',   ERROR_USAGE) if $stop_time_format !~ m/^(epoch|epoch1000|datetime)$/;
+
+    my $tmp_dir = "$output_dir/.tmp";
+    if (!-d $tmp_dir) {
+        mkpath $tmp_dir or die "Cannot create directory '$tmp_dir'";
+    }
+
+    my $where;
+    my $mysqlfiletime;
+    my $filename;
+    my $time = time;
+    if ($yesterday) {
+        $start_time = substr(last_quarter_hour($time - 86400), 0, 10) . '000000';
+        $end_time   = substr(last_quarter_hour($time), 0, 10) . '000000';
+        $mysqlfiletime = substr($start_time,0,8);
+        $where = '';
+        $filename = "$tmp_dir/cdr_$mysqlfiletime.tsv";
+    }
+    elsif ((not defined $start_time) or (not defined $end_time)) {
+        $start_time = last_quarter_hour($time - 900 + ($call_time_offset * 3600));
+        $end_time   = last_quarter_hour($time + ($call_time_offset * 3600));
+        $mysqlfiletime = substr(last_quarter_hour($time - 900 + ($call_time_offset * 3600) - ($rollover_hour * 3600)),0,8);
+        $where = "where $stop_time_field >= " . packed_to_vos3000_date($start_time, $stop_time_format);
+
+        # When the VOS3000 switches over to a new file at the top of the hour calls may 
+        # still be written to the old file for 0-60 seconds, so for the last file of the
+        # day get all calls with stoptime >= $start_time
+        if (substr(last_quarter_hour($time - 900 + ($call_time_offset * 3600) - ($rollover_hour * 3600)), 8, 6) ne '000000') {
+            # This is not the last file, so append an end time condition
+            $where .= " and $stop_time_field < " . packed_to_vos3000_date($end_time, $stop_time_format);;
+        }
+        $filename = "$tmp_dir/cdr_${start_time}_${end_time}.tsv";
+    }
+    my $mysqlfile = "e_cdr_$mysqlfiletime";
+
+    debug("start_time=$start_time, end_time=$end_time, mysqlfile='$mysqlfile', mysql_db='$mysql_db', where='$where', filename=$filename");
+
+    # Execute a MySQL script
+    my $command = "echo 'SELECT $field_list FROM $mysqlfile $where' | mysql -B -u $mysql_user $mysql_db > $filename";
+    debug($command);
+
+    `
+$command
+gzip --force $filename
+mv $filename.gz $output_dir/.
+`
+
+}
+
+sub last_quarter_hour($) {
+    my ($epoch_time) = @_;
+
+    my ($sec, $min, $hour, $day, $month, $year) = (gmtime($epoch_time))[ 0, 1, 2, 3, 4, 5 ];
+    $year  += 1900;
+    $month += 1;
+    $sec = 0;
+
+    # Round down to the nearest quarter hour
+    if ($min < 15) {
+        $min = 0;
+    }
+    elsif ($min < 30) {
+        $min = 15;
+    }
+    elsif ($min < 45) {
+        $min = 30;
+    }
+    else {
+        $min = 45;
+    }
+
+    return sprintf('%04d%02d%02d%02d%02d%02d', $year, $month, $day, $hour, $min, $sec);
+}
+
+# Convert a packed date into a VOS3000 date (epoch * 1000)
+sub packed_to_vos3000_date($$) {
+    my ($packed_date, $date_format) = @_;
+
+    my $retval;
+
+    if ($date_format eq 'datetime') {
+        $retval = $packed_date;
+    }
+    elsif ($packed_date =~ m/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/) {
+        my ($year, $month, $day, $hour, $min, $sec) = ($1, $2, $3, $4, $5, $6);
+        $retval = timegm($sec, $min, $hour, $day, $month - 1, $year);
+        $retval = $retval * 1000 if $date_format eq 'epoch1000';
+    }
+    else {
+        die "Invalid packed date: $packed_date";
+    }
+
+    return $retval;
+}
+
+sub debug($) {
+    my ($message) = @_;
+
+    print STDERR "$message\n" if $DEBUG;
+}
+
+sub usage(;$$) {
+    my ($message, $exit_code) = @_;
+
+    $exit_code ||= 0;
+
+    my $output_dir = OUTPUT_DIR;
+    my $mysql_db = MYSQL_DB; 
+    my $mysql_user = MYSQL_USER; 
+    my $stop_time_field = STOP_TIME_FIELD;
+    my $stop_time_format = STOP_TIME_FORMAT;
+
+    print STDERR "$message\n\n" if defined $message;
+    print <<"EOUSAGE";
+Usage: $0 options files
+--output-dir /full/path/to/cdr/output
+    Where the CDR files should end up. Defaults to "$output_dir".
+
+--start-time YYYYMMDDHHMISS
+    Extract CDRs with call end times >= this date. Defaults to the most recent
+    quarter hour - 15 minutes.
+
+--end-time YYYYMMDDHHMISS
+    Extract CDRs with call end times < this date. Defaults to the most recent
+    quarter hour.
+
+--yesterday
+    Extract all of the data from yesterday's file. When you first set this script
+    up on a server it's a good idea to run the script once a day in the middle of
+    the day with the --yesterday flag set, that way you're guaranteed to get all 
+    of the CDRs even if you messed up the --rollover-hour or --call-time-offset 
+    settings.
+
+--mysql-db dbname
+    Name of the MySQL database. Defaults to "$mysql_db".
+
+--mysql-user username
+    Name of the MySQL user. Defaults to "$mysql_user".
+
+--stop-time-field stoptime | stop
+    Name of the "call end time" or "call stop time" field. Defaults to "$stop_time_field".
+
+--stop-time-format epoch | epoch1000 | datetime
+    Whether the VOS3000 stores the stoptime as an epoch time (the number of seconds
+    since January 1, 1970), epoch1000 time (the number of seconds since January 1,
+    1970 multiplied by 1000), or as a MySQL datetime field (YYYY-MM-DD HH:MI:SS).
+    Defaults to "$stop_time_format".
+
+--rollover-hour n
+    Each file has 24 hours of data, and one field (the call end time) will start 
+    a few seconds after the top of the hour and end a few seconds after the top 
+    of the hour 24 hours later. We call this hour the "rollover hour" and it can
+    be in the range of 0-23. The --rollover-hour defaults to 0.
+
+--call-time-offset n
+    The call end times recorded in the database may be in a timezone other than 
+    the system time of the database. If you always want the latest 15 minutes of 
+    data, you need to tell the script the number of hours offset from UTC the 
+    data in the database is. So If it's currently 00:00:01 UTC, and the latest 
+    call in the database is time-stamped with a "stoptime" of 17:00:01, then the 
+    call time offset is -7 hours. The --call-time-offset defaults to 0.
+
+--field-list list,of,comma,separated,field,names
+    By default this script does a "select * from table". If you only want some of
+    the fields, you can specify them as a comma-separated list of field names here.
+
+--help
+    This helpful message
+
+--debug
+    Turn on debigging output
+EOUSAGE
+
+    exit $exit_code;
+}
+
+1;
