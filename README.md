@@ -24,17 +24,21 @@ Setup
  * Log into your Linux-based switch as root and create a "webcdr" account that will run the script:
 
    useradd -c 'WebCDR Data Collection' -d /home/webcdr -m -s /bin/bash webcdr
+
    mkdir ~webcdr/bin
 
  * From the machine where you downloaded the files, copy the extract_vos3000_data and crontab.txt files to ~webcdr/bin/:
 
    scp extract_vos3000_data root@[IP of switch]:~webcdr/bin/
+
    scp crontab.txt root@[IP of switch]:~webcdr/bin/
 
  * Log into your Linux-based switch as root, su to the webcdr account, and load the crontab:
 
    su - webcdr
+
    crontab ~webcdr/bin/crontab.txt
+
    exit
 
  * As root again, change ownership of the webcdr directory back to webcdr:
