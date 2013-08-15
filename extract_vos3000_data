@@ -122,12 +122,17 @@ sub main {
     # Execute a MySQL script
     my $command = "echo 'SELECT $field_list FROM $mysqlfile $where' | mysql -B -u $mysql_user $mysql_db > $filename";
     debug($command);
+    my $errno = system($command);
 
-    `
-$command
-gzip --force $filename
-mv $filename.gz $output_dir/.
-`
+    if ($errno > 0) {
+        print "Error #$errno while executing '$command'\n";
+        unlink $filename if -e $filename;
+        exit($errno);
+    }
+    else {
+        # Success! Compress and move the file
+        $errno = system("gzip --force $filename; mv $filename.gz $output_dir/.");
+    }
 
 }
 
