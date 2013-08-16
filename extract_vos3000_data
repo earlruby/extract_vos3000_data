@@ -52,6 +52,7 @@ sub main {
     my $output_dir = OUTPUT_DIR;
     my $mysql_db = MYSQL_DB;
     my $mysql_user = MYSQL_USER;
+    my $mysql_password;
     my $stop_time_field = STOP_TIME_FIELD;
     my $stop_time_format = STOP_TIME_FORMAT;
 
@@ -67,6 +68,7 @@ sub main {
         'yesterday!'         => \$yesterday,
         'mysql-db=s'         => \$mysql_db,
         'mysql-user=s'       => \$mysql_user,
+        'mysql-password=s'   => \$mysql_password,
         'stop-time-field=s'  => \$stop_time_field,
         'stop-time-format=s' => \$stop_time_format,
         'rollover-hour=n'    => \$rollover_hour,
@@ -120,7 +122,9 @@ sub main {
     debug("start_time=$start_time, end_time=$end_time, mysqlfile='$mysqlfile', mysql_db='$mysql_db', where='$where', filename=$filename");
 
     # Execute a MySQL script
-    my $command = "echo 'SELECT $field_list FROM $mysqlfile $where' | mysql -B -u $mysql_user $mysql_db > $filename";
+    my $command = "echo 'SELECT $field_list FROM $mysqlfile $where' | mysql -B --user=$mysql_user ";
+    $command .= "--password=$mysql_password " if defined $mysql_password;	# Some installations have password-less installs, so password is not required
+    $command .= "$mysql_db > $filename";
     debug($command);
     my $errno = system($command);
 
