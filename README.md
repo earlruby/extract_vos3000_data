@@ -39,6 +39,9 @@ Setup
 
    crontab ~webcdr/bin/crontab.txt
 
+   # If you need to make any changes to the cron
+   crontab -e
+
    exit
 
  * As root again, change ownership of the webcdr directory back to webcdr:
@@ -46,4 +49,19 @@ Setup
    chown -R webcdr ~webcdr
 
 The cron job should run every 15 minutes and extract the previous 15 minutes of VOS3000 data to ~webcdr/cdr_data/.
+
+Security
+========
+
+For added security, you should create a separate, read-only MySQL account for the webcdr user. Log into MySQL as root and enter:
+
+   MySQL> CREATE USER 'webcdr'@'localhost' IDENTIFIED BY 'password-for-webcdr';
+   MySQL> GRANT SELECT ON vos3000db.* TO 'webcdr'@'localhost';
+
+You can pass the user name and password to extract_vos3000_data using --myysql-user and --mysql-password, but anyone running 'ps -ef | grep -i mysql' can see your user name and password while the script is running. A more secure way to run this is to set up a .my.cnf file with your user name and password. A sample file is included with this package. You will need to edit .my.cnf and put in the user name and password for your setup, then install it in the ~webcdr/ directory. Make sure to set the permissions so that no one can read the file:
+
+   chown webcdr ~webcdr/.my.cnf
+   chmod 600 ~webcdr/.my.cnf
+
+
 

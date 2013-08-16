@@ -29,7 +29,6 @@ use Time::Local qw(timegm);
 
 use constant OUTPUT_DIR => '/home/webcdr/cdr_data';
 use constant MYSQL_DB   => 'vos3000db';
-use constant MYSQL_USER => 'root';
 use constant STOP_TIME_FIELD => 'stop';			# "stop" or "stoptime"
 use constant STOP_TIME_FORMAT => 'datetime';
 
@@ -52,7 +51,7 @@ sub main {
 
     my $output_dir = OUTPUT_DIR;
     my $mysql_db = MYSQL_DB;
-    my $mysql_user = MYSQL_USER;
+    my $mysql_user;
     my $mysql_password;
     my $stop_time_field = STOP_TIME_FIELD;
     my $stop_time_format = STOP_TIME_FORMAT;
@@ -229,7 +228,12 @@ Usage: $0 options files
     Name of the MySQL database. Defaults to "$mysql_db".
 
 --mysql-user username
-    Name of the MySQL user. Defaults to "$mysql_user".
+    Name of the MySQL user. Defaults to "$mysql_user". Not required, since 
+    password-less access to MySQL can be configured.
+
+--mysql-password password
+    Password of the MySQL user. Not required, since password-less access can be 
+    configured.
 
 --stop-time-field stoptime | stop
     Name of the "call end time" or "call stop time" field. Defaults to "$stop_time_field".
