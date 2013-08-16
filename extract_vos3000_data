@@ -122,8 +122,9 @@ sub main {
     debug("start_time=$start_time, end_time=$end_time, mysqlfile='$mysqlfile', mysql_db='$mysql_db', where='$where', filename=$filename");
 
     # Execute a MySQL script
-    my $command = "echo 'SELECT $field_list FROM $mysqlfile $where' | mysql -B --user=$mysql_user ";
-    $command .= "--password=$mysql_password " if defined $mysql_password;	# Some installations have password-less installs, so password is not required
+    my $command = "echo 'SELECT $field_list FROM $mysqlfile $where' | mysql -B ";
+    $command .= "--user=$mysql_user " if defined $mysql_user;			# Some installations have password-less installs, so user name/password is not required
+    $command .= "--password=$mysql_password " if defined $mysql_password;
     $command .= "$mysql_db > $filename";
     debug($command);
     my $errno = system($command);
