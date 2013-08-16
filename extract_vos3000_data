@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 
-# Each day the VOS3000 switch creates a new MySQL database file for that day's call data. These files have the format e_cdr_YYYYMMDD.*
+# Each day the VOS3000 switch creates a new MySQL database table for that day's call data. These tables have names
+# that follow the format e_cdr_YYYYMMDD.*
 #
 # Manually you can extract all data from VOS3000 with this:
 #
@@ -8,17 +9,17 @@
 #
 # This script allows you to grab the latest 15 minutes of data every 15 minutes and put that data into separate files.
 #
-# Each file has 24 hours of data, and one field (the call end time) will start a few seconds after the top of the hour and
-# end a few seconds after the top of the hour 24 hours later. We call this hour the "rollover hour" and it can be in the
-# range of 0-23.
+# Each file has 24 hours of data, and one field (the call end time) will start a few seconds after the top of the hour
+# and end a few seconds after the top of the hour 24 hours later. We call this hour the "rollover hour" and it can be
+# in the range of 0-23.
 #
-# The call end times recorded in the database may be in a timezone other than the system time of the database. If you always want
-# the latest 15 minutes of data, you need to tell the script the number of hours offset from UTC the data in the database is. So
-# If it's currently 00:00:01 UTC, and the latest call in the database is time-stamped with a "stoptime" of 17:00:01, then the 
-# call time offset is -7 hours.
+# The call end times recorded in the database may be in a timezone other than the system time of the database. If you
+# always want the latest 15 minutes of data, you need to tell the script the number of hours offset from UTC the data
+# in the database is. So If it's currently 00:00:01 UTC, and the latest call in the database is time-stamped with a
+# "stoptime" of 17:00:01, then the call time offset is -7 hours.
 #
-# Since there's no telling what Perl libraries may be installed on a VOS3000 switch, this script is designed to work with as few
-# required libraries as possible.
+# Since there's no telling what Perl libraries may be installed on a VOS3000 switch, this script is designed to work
+# with as few required libraries as possible.
 
 use strict;
 

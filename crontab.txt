@@ -4,7 +4,7 @@ MAILTO=vos3000@webcdr.com
 2,17,32,47 * * * * /home/webcdr/bin/extract_vos3000_data --stop-time-field stop --stop-time-format datetime --rollover-hour 1 --call-time-offset -4 
 
 # Extract everything from yesterday once a day, just to verify that we got everything
-7 8 * * * /home/webcdr/bin/extract_vos3000_data --yesterday
+7 8 * * * /home/webcdr/bin/extract_vos3000_data --yesterday --stop-time-field stop --stop-time-format datetime --rollover-hour 1 --call-time-offset -4
 
 # Delete CDR files after 30 days so the disk doesn't fill up
 5 0 * * * find /home/webcdr/cdr_data -name 'cdr*.gz' -mtime +30 -print0 | xargs --null --no-run-if-empty rm -f
