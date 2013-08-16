@@ -199,7 +199,6 @@ sub usage(;$$) {
 
     my $output_dir = OUTPUT_DIR;
     my $mysql_db = MYSQL_DB; 
-    my $mysql_user = MYSQL_USER; 
     my $stop_time_field = STOP_TIME_FIELD;
     my $stop_time_format = STOP_TIME_FORMAT;
 
@@ -228,8 +227,8 @@ Usage: $0 options files
     Name of the MySQL database. Defaults to "$mysql_db".
 
 --mysql-user username
-    Name of the MySQL user. Defaults to "$mysql_user". Not required, since 
-    password-less access to MySQL can be configured.
+    Name of the MySQL user. Not required, since password-less access to MySQL 
+    can be configured.
 
 --mysql-password password
     Password of the MySQL user. Not required, since password-less access can be 
