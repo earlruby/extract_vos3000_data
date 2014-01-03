@@ -225,24 +225,41 @@ Usage: $0 options files
     settings.
 
 --mysql-db dbname
-    Name of the MySQL database. Defaults to "$mysql_db".
+    Name of the MySQL database. Defaults to "$mysql_db". If you're not sure of the 
+    name used by your installation, look in the directory /var/lib/mysql/ for a
+    directory with a name similar to "$mysql_db". That's the name of your database.
 
 --mysql-user username
     Name of the MySQL user. Not required, since password-less access to MySQL 
-    can be configured.
+    can be configured, or you can use a ~/.my.cnf file.
 
 --mysql-password password
     Password of the MySQL user. Not required, since password-less access can be 
-    configured.
+    configured, or you can use a ~/.my.cnf file.
 
 --stop-time-field stoptime | stop
     Name of the "call end time" or "call stop time" field. Defaults to "$stop_time_field".
+    If you're not sure what the name of the field is, try typing:
+
+    echo SELECT \* FROM e_cdr_YYYYMMDD | mysql -B -u $USER $DBNAME | head -5
+
+    ... replacing "YYYYMMDD" with yesterday's date. The first line that comes back will
+    contain the names of all of the fields in the data table.
 
 --stop-time-format epoch | epoch1000 | datetime
     Whether the VOS3000 stores the stoptime as an epoch time (the number of seconds
     since January 1, 1970), epoch1000 time (the number of seconds since January 1,
     1970 multiplied by 1000), or as a MySQL datetime field (YYYY-MM-DD HH:MI:SS).
     Defaults to "$stop_time_format".
+
+    If you're not sure what the name of the field is, try typing:
+
+    echo SELECT \* FROM e_cdr_YYYYMMDD | mysql -B -u $USER $DBNAME | head -5 > file.csv
+
+    ... replacing "YYYYMMDD" with yesterday's date. Load file.csv into a spreadsheet
+    program and look at the values in the stop time field column. If it's a human-readable
+    date and time you're using "datetime". If it's a 10 digit long number then you're
+    using "epoch", if If it's a 13 digit long number then you're using "epoch1000".
 
 --rollover-hour n
     Each file has 24 hours of data, and one field (the call end time) will start 
