@@ -40,10 +40,10 @@ Setup
  * Figure out what command-line options you need to pass to the script. You can try the options out on the command line
    to see what happens and verify that you're getting a CDR file.
 
- * A sample crontab file is included with this script. Use the command line you came up with on the prvious step as the 
+ * A sample crontab file is included with this script. Use the command line you came up with on the previous step as the 
    crontab command to run every 15 minutes. You may also want to run the same command once a day with the --yesterday flag 
    appended in order to get a dump of all data from the previous day. (If the "yesterday" file contains only duplicate 
-   records from the previous 24 hours you can delete this once-a-day task from the crontab.  Once you have edited the 
+   records from the previous 24 hours you can delete this once-a-day task from the crontab.)  Once you have edited the 
    crontab.txt file you can add it to the webcdr account like so:
 
    su - webcdr
