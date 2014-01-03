@@ -20,6 +20,17 @@
 #
 # Since there's no telling what Perl libraries may be installed on a VOS3000 switch, this script is designed to work
 # with as few required libraries as possible.
+#
+# With VOS3000, data is usually stored in the database using UTC, but the MySQL data file names are based on the date in the time zone
+# used by the server. So if the server is set on Hong Kong Time, VOS3000 starts writing to the new data table at midnight HK time
+# with the first call time-stamped the previous day at 16:00 UTC. The switch-over may happen a few minutes after midnight, meaning
+# that some calls between 16:00 UTC - 16:01 UTC are in the previous day's file.
+#
+# I originally tried to work around this by adding settings for the rollover hour and call time offset, but finally decided that
+# the simplest and most foolproof way to may sure that you get all of the data is just to run each query 3 times: on the previous
+# day's table, the current day's table, and the next day's table, then merge the results into a single CDR file. That way it will 
+# work regardless of whether the server is in a +UTC time zone, a -UTC timezone, or if the server is slow to switch-over to a new
+# CDR table.
 
 use strict;
 
@@ -41,6 +52,7 @@ my $DEBUG = 0;
 sub main;
 sub last_quarter_hour($);
 sub packed_to_vos3000_date($$);
+sub modify_packed_date($$);
 sub debug($);
 sub usage(;$$);
 
@@ -56,7 +68,6 @@ sub main {
     my $stop_time_field = STOP_TIME_FIELD;
     my $stop_time_format = STOP_TIME_FORMAT;
 
-    my $rollover_hour = 0;
     my $call_time_offset = 0;
     my $field_list = '*';
 
@@ -71,7 +82,6 @@ sub main {
         'mysql-password=s'   => \$mysql_password,
         'stop-time-field=s'  => \$stop_time_field,
         'stop-time-format=s' => \$stop_time_format,
-        'rollover-hour=n'    => \$rollover_hour,
         'call-time-offset=i' => \$call_time_offset,
         'field-list=s'       => \$field_list,
         'debug!'             => \$DEBUG,
@@ -91,54 +101,63 @@ sub main {
         mkpath $tmp_dir or die "Cannot create directory '$tmp_dir'";
     }
 
-    my $where;
-    my $mysqlfiletime;
-    my $filename;
     my $time = time;
     if ($yesterday) {
-        $start_time = substr(last_quarter_hour($time - 86400), 0, 10) . '000000';
-        $end_time   = substr(last_quarter_hour($time), 0, 10) . '000000';
-        $mysqlfiletime = substr($start_time,0,8);
-        $where = '';
-        $filename = "$tmp_dir/cdr_$mysqlfiletime.tsv";
+        $start_time = substr(last_quarter_hour($time - 86400), 0, 8) . '000000';
+        $end_time   = substr(last_quarter_hour($time), 0, 8) . '000000';
     }
     elsif ((not defined $start_time) or (not defined $end_time)) {
         $start_time = last_quarter_hour($time - 900 + ($call_time_offset * 3600));
         $end_time   = last_quarter_hour($time + ($call_time_offset * 3600));
-        $mysqlfiletime = substr(last_quarter_hour($time - 900 + ($call_time_offset * 3600) - ($rollover_hour * 3600)),0,8);
-        $where = "where $stop_time_field >= " . packed_to_vos3000_date($start_time, $stop_time_format);
-
-        # When the VOS3000 switches over to a new file at the top of the hour calls may 
-        # still be written to the old file for 0-60 seconds, so for the last file of the
-        # day get all calls with stoptime >= $start_time
-        if (substr(last_quarter_hour($time - 900 + ($call_time_offset * 3600) - ($rollover_hour * 3600)), 8, 6) ne '000000') {
-            # This is not the last file, so append an end time condition
-            $where .= " and $stop_time_field < " . packed_to_vos3000_date($end_time, $stop_time_format);;
-        }
-        $filename = "$tmp_dir/cdr_${start_time}_${end_time}.tsv";
     }
-    my $mysqlfile = "e_cdr_$mysqlfiletime";
+    my $where = "where $stop_time_field >= " . packed_to_vos3000_date($start_time, $stop_time_format) . " and $stop_time_field < " . packed_to_vos3000_date($end_time, $stop_time_format);
+    my $cdr_file_name = "$tmp_dir/cdr_${start_time}_${end_time}.tsv";
 
-    debug("start_time=$start_time, end_time=$end_time, mysqlfile='$mysqlfile', mysql_db='$mysql_db', where='$where', filename=$filename");
+    # Get the names of the data tables from 24 hours before $start_time to 24 hours after $end_time
+    my @mysqlfiles;
+    my $first_file_time = modify_packed_date($start_time, -86400);
+    my $last_file_time  = modify_packed_date($end_time,   +86400);
+    my $mysqlfiletime = $first_file_time;
+    while ($mysqlfiletime <= $last_file_time) {
+        push(@mysqlfiles, 'e_cdr_' . substr($mysqlfiletime, 0, 8));
+        $mysqlfiletime = modify_packed_date($mysqlfiletime, +86400);
+    }
+    debug("start_time=$start_time, end_time=$end_time, mysql_db='$mysql_db', where='$where', cdr_file_name=$cdr_file_name");
+    debug("mysqlfiles=" . join(', ', @mysqlfiles));
 
-    # Execute a MySQL script
-    my $command = "echo 'SELECT $field_list FROM $mysqlfile $where' | mysql -B ";
-    $command .= "--user=$mysql_user " if defined $mysql_user;			# Some installations have password-less installs, so user name/password is not required
-    $command .= "--password=$mysql_password " if defined $mysql_password;
-    $command .= "$mysql_db > $filename";
-    debug($command);
+    my $pass = 1;
+    foreach my $mysqlfile (@mysqlfiles) {
+        # Execute a MySQL script
+        my $command = "echo 'SELECT $field_list FROM $mysqlfile $where' | mysql -B --skip-column-names ";
+        $command .= "--user=$mysql_user " if defined $mysql_user;		# Some installations have password-less installs, so user name/password is not required
+        $command .= "--password=$mysql_password " if defined $mysql_password;
+        if ($pass == 1) {
+            # Create file on first pass
+            $command .= "$mysql_db > $cdr_file_name";
+        }
+        else {
+            # Append to file on subsequent passes, do not output STDERR
+            $command .= "$mysql_db >> $cdr_file_name 2> /dev/null";
+        }
+        debug($command);
+        my $errno = system($command);
+
+        # We only care if the first pass fails. Files in the future may or may not exist, so passes after 1 may fail, and that's OK
+        if ($errno > 0 and $pass == 1) {
+            print "Error #$errno while executing '$command'\n";
+            unlink $cdr_file_name if -e $cdr_file_name;
+            exit($errno);
+        }
+        $pass++;
+    }
+
+    # Success! Compress and move the file
+    my $command = "gzip --force $cdr_file_name; mv $cdr_file_name.gz $output_dir/.";
     my $errno = system($command);
-
     if ($errno > 0) {
         print "Error #$errno while executing '$command'\n";
-        unlink $filename if -e $filename;
         exit($errno);
     }
-    else {
-        # Success! Compress and move the file
-        $errno = system("gzip --force $filename; mv $filename.gz $output_dir/.");
-    }
-
 }
 
 sub last_quarter_hour($) {
@@ -185,6 +204,24 @@ sub packed_to_vos3000_date($$) {
     }
 
     return $retval;
+}
+
+sub modify_packed_date($$) {
+    my ($packed_date, $offset) = @_;
+
+    if ($packed_date =~ m/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/) {
+        my ($year, $month, $day, $hour, $min, $sec) = ($1, $2, $3, $4, $5, $6);
+        my $epoch_time = timegm($sec, $min, $hour, $day, $month - 1, $year);
+        $epoch_time += $offset;
+        ($sec, $min, $hour, $day, $month, $year) = (gmtime($epoch_time))[ 0, 1, 2, 3, 4, 5 ];
+        $year  += 1900;
+        $month += 1;
+        $sec = 0;
+        return sprintf('%04d%02d%02d%02d%02d%02d', $year, $month, $day, $hour, $min, $sec);
+    }
+    else {
+        die "Date '$packed_date' is not a packed date";
+    }
 }
 
 sub debug($) {
@@ -261,19 +298,14 @@ Usage: $0 options files
     date and time you're using "datetime". If it's a 10 digit long number then you're
     using "epoch", if If it's a 13 digit long number then you're using "epoch1000".
 
---rollover-hour n
-    Each file has 24 hours of data, and one field (the call end time) will start 
-    a few seconds after the top of the hour and end a few seconds after the top 
-    of the hour 24 hours later. We call this hour the "rollover hour" and it can
-    be in the range of 0-23. The --rollover-hour defaults to 0.
-
 --call-time-offset n
-    The call end times recorded in the database may be in a timezone other than 
-    the system time of the database. If you always want the latest 15 minutes of 
-    data, you need to tell the script the number of hours offset from UTC the 
-    data in the database is. So If it's currently 00:00:01 UTC, and the latest 
-    call in the database is time-stamped with a "stoptime" of 17:00:01, then the 
-    call time offset is -7 hours. The --call-time-offset defaults to 0.
+    The call end times recorded in the database are usually in UTC, but they may be 
+    some other time zone -- not necessarily the server's time zone either. If you 
+    always want the latest 15 minutes of data, you need to tell the script the number 
+    of hours offset from UTC the data in the database is. So If it's currently 
+    00:00:01 UTC, and the latest call in the database is time-stamped with a 
+    "stoptime" of 17:00:01, then the call time offset is -7 hours. The 
+    --call-time-offset defaults to 0.
 
 --field-list list,of,comma,separated,field,names
     By default this script does a "select * from table". If you only want some of
